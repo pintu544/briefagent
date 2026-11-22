@@ -141,7 +141,7 @@ async function postJson<T>(url: string, payload: unknown): Promise<T> {
 
 export default function Home() {
   const [question, setQuestion] = useState("");
-  const [runId, setRunId] = useState<string | null>(null);
+  const [runToken, setRunToken] = useState<string | null>(null);
   const [status, setStatus] = useState<RunStatus>("idle");
   const [subQuestions, setSubQuestions] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
@@ -166,11 +166,11 @@ export default function Home() {
     setFailedStep(null);
     setStatus("planning");
     try {
-      const data = await postJson<{ runId: string; subQuestions: string[] }>(
+      const data = await postJson<{ token: string; subQuestions: string[] }>(
         "/api/plan",
         { question: question.trim() },
       );
-      setRunId(data.runId);
+      setRunToken(data.token);
       setSubQuestions(data.subQuestions);
       setSources([]);
       setResearchWarning(null);
@@ -188,21 +188,26 @@ export default function Home() {
     setFailedStep(null);
     setStatus("researching");
     try {
-      if (!runId) throw new Error("This run has expired. Start again.");
-      // Checkpoint 1 is recorded on the server first — research will
-      // refuse to run for a run whose plan was never approved.
-      await postJson<{ ok: boolean }>("/api/plan/approve", {
-        runId,
+      if (!runToken) throw new Error("This run has expired. Start again.");
+      // Checkpoint 1 first: approving re-signs the run token at stage
+      // "approved" — research will refuse any token that has not been
+      // through this step. Each step hands the next its fresh token
+      // directly, so nothing depends on state timing.
+      const approved = await postJson<{ token: string }>("/api/plan/approve", {
+        token: runToken,
         subQuestions,
       });
-      const data = await postJson<{ sources: Source[]; warning?: string }>(
-        "/api/research",
-        { runId },
-      );
+      setRunToken(approved.token);
+      const data = await postJson<{
+        token: string;
+        sources: Source[];
+        warning?: string;
+      }>("/api/research", { token: approved.token });
+      setRunToken(data.token);
       setSources(data.sources);
       setResearchWarning(data.warning ?? null);
       setStatus("drafting");
-      await runDraft();
+      await runDraft(data.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Research failed.");
       setFailedStep("research");
@@ -210,11 +215,11 @@ export default function Home() {
     }
   }
 
-  async function runDraft() {
+  async function runDraft(token: string) {
     try {
-      if (!runId) throw new Error("This run has expired. Start again.");
-      // The server drafts only from the sources it stored for this run.
-      const data = await postJson<DraftResult>("/api/draft", { runId });
+      // The server drafts only from the sources inside the verified
+      // "researched" token.
+      const data = await postJson<DraftResult>("/api/draft", { token });
       setDraft(data);
       setStatus("awaiting-draft-approval");
     } catch (err) {
@@ -231,7 +236,8 @@ export default function Home() {
       setError(null);
       setFailedStep(null);
       setStatus("drafting");
-      void runDraft();
+      // runToken still holds the "researched" token from the research step.
+      if (runToken) void runDraft(runToken);
     }
   }
 
@@ -303,7 +309,7 @@ export default function Home() {
 
   function startOver() {
     setStatus("idle");
-    setRunId(null);
+    setRunToken(null);
     setSubQuestions([]);
     setSources([]);
     setResearchWarning(null);

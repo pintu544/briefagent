@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { planQuestion } from "@/lib/agent";
-import { createRun } from "@/lib/runs";
+import { signRunToken, TokenError } from "@/lib/token";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -29,12 +29,15 @@ export async function POST(req: Request) {
 
   try {
     const subQuestions = await planQuestion(question);
-    // The run is created server-side; its id keys every later step, so the
-    // approval gate and source provenance are enforced by the server, not
-    // by the client (DESIGN, Slice 1 QA fix pass).
-    const run = createRun(question, subQuestions);
-    return NextResponse.json({ runId: run.id, subQuestions });
+    // The run state is signed into a token the client carries to the next
+    // step; the signature, not server memory, is what every later gate
+    // checks (DESIGN, production fix — stateless signed run tokens).
+    const token = signRunToken({ stage: "planned", question, subQuestions });
+    return NextResponse.json({ token, subQuestions });
   } catch (err) {
+    if (err instanceof TokenError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Planning failed. Please try again." },
       { status: 502 },

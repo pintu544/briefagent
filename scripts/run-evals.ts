@@ -85,18 +85,19 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
     note: "",
   };
   try {
-    const plan = await postJson<{ runId: string; subQuestions: string[] }>(
+    const plan = await postJson<{ token: string; subQuestions: string[] }>(
       "/api/plan",
       { question: scenario.question },
     );
-    await postJson<{ ok: boolean }>("/api/plan/approve", {
-      runId: plan.runId,
+    const approved = await postJson<{ token: string }>("/api/plan/approve", {
+      token: plan.token,
       subQuestions: plan.subQuestions,
     });
     const research = await postJson<{
+      token: string;
       sources: unknown[];
       warning?: string;
-    }>("/api/research", { runId: plan.runId });
+    }>("/api/research", { token: approved.token });
     const draft = await postJson<{
       briefMarkdown: string;
       conflicts: unknown[];
@@ -107,7 +108,7 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
         coveragePct: number | null;
         wordCount: number;
       };
-    }>("/api/draft", { runId: plan.runId });
+    }>("/api/draft", { token: research.token });
 
     const seconds = (Date.now() - started) / 1000;
     const checks: string[] = [];

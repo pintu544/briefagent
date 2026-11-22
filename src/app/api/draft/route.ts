@@ -1,39 +1,44 @@
 import { NextResponse } from "next/server";
 import { draftBrief } from "@/lib/agent";
-import { getRun } from "@/lib/runs";
+import { parseRunToken, requireStage, TokenError } from "@/lib/token";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /**
- * Drafting uses ONLY the question and sources stored server-side on the
- * run by /api/plan and /api/research. Any question or sources supplied in
- * the request body are ignored — a brief can never be drafted from
- * fabricated, client-supplied sources (Slice 1 QA fix C1).
+ * Drafting uses ONLY the question and sources inside the verified
+ * "researched" token — they were put there by /api/research and any edit
+ * breaks the signature. A brief can never be drafted from fabricated,
+ * client-supplied sources (Slice 1 QA fix C1, preserved by the token
+ * design).
  */
 export async function POST(req: Request) {
-  let body: { runId?: unknown };
+  let body: { token?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const runId = typeof body.runId === "string" ? body.runId : "";
-  const run = runId ? getRun(runId) : undefined;
-  if (!run) {
-    return NextResponse.json(
-      { error: "Unknown run. Start again from the question." },
-      { status: 404 },
+  let payload;
+  try {
+    payload = parseRunToken(body.token);
+    requireStage(
+      payload,
+      "researched",
+      payload.stage === "planned"
+        ? "The plan for this run has not been approved yet."
+        : "This run has no research yet — approve the plan and run research first.",
     );
+  } catch (err) {
+    if (err instanceof TokenError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
   }
-  if (!run.planApproved) {
-    return NextResponse.json(
-      { error: "The plan for this run has not been approved yet." },
-      { status: 409 },
-    );
-  }
-  if (!run.sources || run.sources.length === 0) {
+
+  const sources = payload.sources ?? [];
+  if (sources.length === 0) {
     return NextResponse.json(
       { error: "This run has no research yet — approve the plan and run research first." },
       { status: 409 },
@@ -41,7 +46,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await draftBrief(run.question, run.sources);
+    const result = await draftBrief(payload.question, sources);
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

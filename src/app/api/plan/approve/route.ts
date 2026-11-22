@@ -1,46 +1,58 @@
 import { NextResponse } from "next/server";
-import { approveRunPlan, getRun } from "@/lib/runs";
+import { parseRunToken, requireStage, signRunToken, TokenError } from "@/lib/token";
 
 export const runtime = "nodejs";
 
 /**
- * Checkpoint 1, recorded server-side: the user has approved the (possibly
- * edited) plan for this run. /api/research refuses to run without this.
+ * Checkpoint 1: the user has approved the (possibly edited) plan. The
+ * approval is a re-signed token at stage "approved" carrying the edited
+ * sub-questions — /api/research will only accept that stage, so the gate
+ * cannot be skipped by calling the API directly.
  */
 export async function POST(req: Request) {
-  let body: { runId?: unknown; subQuestions?: unknown };
+  let body: { token?: unknown; subQuestions?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const runId = typeof body.runId === "string" ? body.runId : "";
-  if (!runId || !getRun(runId)) {
-    return NextResponse.json(
-      { error: "Unknown run. Start again from the question." },
-      { status: 404 },
+  try {
+    const payload = parseRunToken(body.token);
+    requireStage(
+      payload,
+      "planned",
+      "This plan has already been approved. Start again from the question if you want a different plan.",
     );
-  }
 
-  if (!Array.isArray(body.subQuestions)) {
-    return NextResponse.json(
-      { error: "A list of sub-questions is required." },
-      { status: 400 },
-    );
-  }
-  const subQuestions = body.subQuestions
-    .filter((q): q is string => typeof q === "string")
-    .map((q) => q.trim())
-    .filter((q) => q.length > 0)
-    .slice(0, 6);
-  if (subQuestions.length === 0) {
-    return NextResponse.json(
-      { error: "At least one sub-question is required." },
-      { status: 400 },
-    );
-  }
+    if (!Array.isArray(body.subQuestions)) {
+      return NextResponse.json(
+        { error: "A list of sub-questions is required." },
+        { status: 400 },
+      );
+    }
+    const subQuestions = body.subQuestions
+      .filter((q): q is string => typeof q === "string")
+      .map((q) => q.trim())
+      .filter((q) => q.length > 0)
+      .slice(0, 6);
+    if (subQuestions.length === 0) {
+      return NextResponse.json(
+        { error: "At least one sub-question is required." },
+        { status: 400 },
+      );
+    }
 
-  approveRunPlan(runId, subQuestions);
-  return NextResponse.json({ ok: true });
+    const token = signRunToken({
+      stage: "approved",
+      question: payload.question,
+      subQuestions,
+    });
+    return NextResponse.json({ token });
+  } catch (err) {
+    if (err instanceof TokenError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
 }

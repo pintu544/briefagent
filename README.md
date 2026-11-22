@@ -19,15 +19,17 @@ tell, from an ordinary chatbot answer, what is sourced and what is invented.
 ## How it works
 
 1. **Checkpoint 1 — plan approval.** Your question is broken into 3–6
-   sub-questions. You can edit, remove or add sub-questions. The server
-   records your approval; research refuses to run without it.
+   sub-questions. You can edit, remove or add sub-questions. Approving
+   re-signs your run token at stage "approved"; research refuses to run
+   without it.
 2. **Research.** Each approved sub-question is searched with Exa and the
    pages are actually read (up to ~12 sources). Every source is shown to
    you with its link. If one sub-question's search fails, the run carries
    on with the rest and tells you.
 3. **Drafting.** The brief (at most ~450 words) is drafted only from the
-   sources stored on your run — the drafting step cannot see any other
-   sources, and sources supplied by a client are ignored.
+   sources sealed inside your signed run token — the drafting step cannot
+   see any other sources, and sources supplied by a client are ignored
+   (any edit would break the signature).
 4. **Citation post-pass.** A mechanical check, not just a prompt: every
    claim in the brief must carry an inline `[S#]` citation to a retrieved
    source. A claim without one is removed from the brief and listed as
@@ -40,20 +42,24 @@ tell, from an ordinary chatbot answer, what is sourced and what is invented.
 
 ## Architecture
 
-A single Next.js (TypeScript, Tailwind) app. Run state lives in a
-server-side in-memory run store keyed by an unguessable `runId`, so the
-two approval gates and source provenance are enforced by the server, not
-by the UI's good behaviour. There is no database and no account system; a
-run exists only for its own lifetime.
+A single Next.js (TypeScript, Tailwind) app. Run state is stateless: it
+travels in a signed run token (HMAC-SHA256, secret in
+`RUN_TOKEN_SECRET`) that the client carries from step to step. Each
+route verifies the token's signature and stage, then re-signs the state
+for the next stage — so the two approval gates and source provenance are
+enforced cryptographically, not by the UI's good behaviour, and they
+hold on serverless hosting where consecutive requests land on different
+function instances. There is no database, no server-side run storage and
+no account system.
 
 API routes:
 
 | Route | Purpose |
 |---|---|
-| `POST /api/plan` | Question → 3–6 sub-questions; creates the run, returns `runId`. |
-| `POST /api/plan/approve` | Records approval of the (possibly edited) plan on the run. |
-| `POST /api/research` | Requires an approved plan (409 otherwise). Exa search + contents per sub-question; stores sources on the run. |
-| `POST /api/draft` | Requires completed research (409 otherwise). Drafts only from the run's stored sources; runs the citation post-pass. |
+| `POST /api/plan` | Question → 3–6 sub-questions; returns a signed token at stage `planned`. |
+| `POST /api/plan/approve` | Verifies the `planned` token; returns a re-signed token at stage `approved` carrying the (possibly edited) plan. |
+| `POST /api/research` | Requires an `approved` token (409 otherwise). Exa search + contents per sub-question; returns a re-signed `researched` token carrying the sources. |
+| `POST /api/draft` | Requires a `researched` token (409 otherwise). Drafts only from the sources sealed inside the token; runs the citation post-pass. |
 
 ## AI tools used
 
@@ -78,6 +84,7 @@ Create `.env.local` (never committed) with:
 FASTROUTER_API_KEY=…
 EXA_API_KEY=…
 FASTROUTER_MODEL=anthropic/claude-sonnet-4.6
+RUN_TOKEN_SECRET=…   # any long random string, e.g. `openssl rand -hex 32`
 ```
 
 Then:
@@ -128,9 +135,11 @@ re-run on a fresh key from the same Doppler project.
 
 ## Honest limits
 
-- **In-memory runs.** Run state is held in server memory only. If the
-  server process restarts, in-flight runs are lost and must be started
-  again. Finished briefs are unaffected (they live in the browser).
+- **Runs live in your tab.** Run state travels in a signed token held by
+  the browser; nothing is stored on the server, so restarts and cold
+  starts cannot lose a run — but if you close the tab mid-run, the token
+  goes with it and the run must be started again. Finished briefs are
+  unaffected (they live in the browser's local storage).
 - **Coverage is mechanical.** The post-pass verifies that every claim
   carries a citation to a retrieved source; it cannot verify that the
   source itself is correct, only that the claim is attributed.
