@@ -117,9 +117,11 @@ async function postJson<T>(url: string, payload: unknown): Promise<T> {
 
 export default function Home() {
   const [question, setQuestion] = useState("");
+  const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<RunStatus>("idle");
   const [subQuestions, setSubQuestions] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
+  const [researchWarning, setResearchWarning] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [failedStep, setFailedStep] = useState<"plan" | "research" | "draft" | null>(null);
@@ -134,11 +136,14 @@ export default function Home() {
     setFailedStep(null);
     setStatus("planning");
     try {
-      const data = await postJson<{ subQuestions: string[] }>("/api/plan", {
-        question: question.trim(),
-      });
+      const data = await postJson<{ runId: string; subQuestions: string[] }>(
+        "/api/plan",
+        { question: question.trim() },
+      );
+      setRunId(data.runId);
       setSubQuestions(data.subQuestions);
       setSources([]);
+      setResearchWarning(null);
       setDraft(null);
       setStatus("awaiting-plan-approval");
     } catch (err) {
@@ -153,12 +158,21 @@ export default function Home() {
     setFailedStep(null);
     setStatus("researching");
     try {
-      const data = await postJson<{ sources: Source[] }>("/api/research", {
+      if (!runId) throw new Error("This run has expired. Start again.");
+      // Checkpoint 1 is recorded on the server first — research will
+      // refuse to run for a run whose plan was never approved.
+      await postJson<{ ok: boolean }>("/api/plan/approve", {
+        runId,
         subQuestions,
       });
+      const data = await postJson<{ sources: Source[]; warning?: string }>(
+        "/api/research",
+        { runId },
+      );
       setSources(data.sources);
+      setResearchWarning(data.warning ?? null);
       setStatus("drafting");
-      await runDraft(data.sources);
+      await runDraft();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Research failed.");
       setFailedStep("research");
@@ -166,12 +180,11 @@ export default function Home() {
     }
   }
 
-  async function runDraft(srcs: Source[]) {
+  async function runDraft() {
     try {
-      const data = await postJson<DraftResult>("/api/draft", {
-        question: question.trim(),
-        sources: srcs,
-      });
+      if (!runId) throw new Error("This run has expired. Start again.");
+      // The server drafts only from the sources it stored for this run.
+      const data = await postJson<DraftResult>("/api/draft", { runId });
       setDraft(data);
       setStatus("awaiting-draft-approval");
     } catch (err) {
@@ -188,7 +201,7 @@ export default function Home() {
       setError(null);
       setFailedStep(null);
       setStatus("drafting");
-      void runDraft(sources);
+      void runDraft();
     }
   }
 
@@ -249,8 +262,10 @@ export default function Home() {
 
   function startOver() {
     setStatus("idle");
+    setRunId(null);
     setSubQuestions([]);
     setSources([]);
+    setResearchWarning(null);
     setDraft(null);
     setError(null);
     setFailedStep(null);
@@ -418,6 +433,11 @@ export default function Home() {
           <h2 className="text-sm font-semibold">
             Sources read ({sources.length})
           </h2>
+          {researchWarning && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {researchWarning}
+            </p>
+          )}
           <ul className="mt-3 space-y-3">
             {sources.map((s) => (
               <li key={s.id} className="text-sm">
@@ -449,9 +469,10 @@ export default function Home() {
               {approved ? "Your final brief" : "Checkpoint 2 — review the draft brief"}
             </h2>
             <p className="text-xs text-stone-500">
-              {draft.stats.wordCount} words · citation coverage{" "}
-              {draft.stats.coveragePct}% ({draft.stats.claimsCited}/
-              {draft.stats.claimsTotal} claims cited)
+              {draft.stats.wordCount} words ·{" "}
+              {draft.stats.coveragePct === null
+                ? "citation coverage — (no claims to check)"
+                : `citation coverage ${draft.stats.coveragePct}% (${draft.stats.claimsCited}/${draft.stats.claimsTotal} claims cited)`}
             </p>
           </div>
 

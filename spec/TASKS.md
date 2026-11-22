@@ -7,7 +7,7 @@
 - [x] T1.4 Draft + citation post-pass: `/api/draft` produces a ≤~450-word brief with `[S#]` citations; post-pass moves uncited claims to "unverified"; conflicts list rendered. Done means: every claim in the sample brief is cited or flagged.
 - [x] T1.5 Draft gate + export: Approve → final state; Copy and Download (.md) enabled only after approval. Done means: export is impossible before approval.
 - [x] T1.6 Failure states: search/model failure shows a plain error + retry; progress states shown throughout. Done means: killing the network mid-run produces a graceful error, not a spinner forever.
-- [ ] Slice 1 QA: adversarial pass (fresh subagent) — odd questions, empty input, conflicting-source question, oversized question. Criticals fixed before Slice 2.
+- [x] Slice 1 QA: adversarial pass (fresh subagent) — odd questions, empty input, conflicting-source question, oversized question. Criticals fixed before Slice 2. (Fix pass 22 Nov 2026: C1 server-side run store + gates + provenance; W1–W8 post-pass/plan/draft/research hardening — all acceptance cases re-run and passing, incl. a full live UI end-to-end run.)
 
 ## Slice 2 — Proof and polish
 - [ ] T2.1 Eval fixtures: 10 scenarios in `fixtures/scenarios.json` with expectations (incl. one conflict-expected, one niche). Done means: fixtures committed with a documented contract.

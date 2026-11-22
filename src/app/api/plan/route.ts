@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { planQuestion } from "@/lib/agent";
+import { createRun } from "@/lib/runs";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -28,7 +29,11 @@ export async function POST(req: Request) {
 
   try {
     const subQuestions = await planQuestion(question);
-    return NextResponse.json({ subQuestions });
+    // The run is created server-side; its id keys every later step, so the
+    // approval gate and source provenance are enforced by the server, not
+    // by the client (DESIGN, Slice 1 QA fix pass).
+    const run = createRun(question, subQuestions);
+    return NextResponse.json({ runId: run.id, subQuestions });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Planning failed. Please try again." },

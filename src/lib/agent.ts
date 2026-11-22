@@ -1,7 +1,7 @@
 import { chatComplete, parseJsonFromModel } from "./fastrouter";
 import { exaSearch } from "./exa";
 import { citationPostPass } from "./citations";
-import type { Conflict, DraftResult, Source } from "./types";
+import type { Conflict, DraftResult, ResearchResult, Source } from "./types";
 
 /* ---------------------------------- plan --------------------------------- */
 
@@ -29,22 +29,31 @@ export async function planQuestion(question: string): Promise<string[]> {
       .filter((q) => q.length > 0);
   };
 
-  let subs: string[];
-  try {
-    subs = await ask("");
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("unreadable response")) {
-      subs = await ask("");
-    } else {
-      throw err;
+  // SPEC FR2 guarantees 3–6 sub-questions: keep repairing until the plan
+  // is big enough, or fail plainly — never hand the gate a stub plan.
+  let subs: string[] = [];
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3 && subs.length < 3; attempt += 1) {
+    try {
+      subs = await ask(
+        attempt === 0
+          ? ""
+          : " Your previous attempt produced too few sub-questions; produce at least 4 distinct ones.",
+      );
+    } catch (err) {
+      lastError = err;
+      // A malformed model response gets one fresh attempt via the loop;
+      // anything else is a real failure.
+      if (!(err instanceof Error && err.message.includes("unreadable response"))) {
+        throw err;
+      }
     }
   }
   if (subs.length < 3) {
-    // One repair retry — the plan gate needs a real plan (SPEC FR2: 3–6).
-    subs = await ask(" Your previous attempt produced too few sub-questions; produce at least 4.");
-  }
-  if (subs.length === 0) {
-    throw new Error("The planner could not break this question down. Try rephrasing it.");
+    if (lastError && subs.length === 0) throw lastError;
+    throw new Error(
+      "The planner could not break this question into at least 3 sub-questions. Try rephrasing it.",
+    );
   }
   return subs.slice(0, 6);
 }
@@ -66,13 +75,35 @@ const RESULTS_PER_QUESTION = 3;
 
 export async function researchSubQuestions(
   subQuestions: string[],
-): Promise<Source[]> {
-  const perQuestion = await Promise.all(
-    subQuestions.map(async (q, i) => {
+): Promise<ResearchResult> {
+  // Dedupe identical sub-questions (the user can edit the plan into
+  // duplicates) so we never pay for or merge the same search twice.
+  const seenQuestions = new Set<string>();
+  const uniqueQuestions: string[] = [];
+  for (const q of subQuestions) {
+    const key = q.toLowerCase().replace(/\s+/g, " ").replace(/\?+$/, "").trim();
+    if (seenQuestions.has(key)) continue;
+    seenQuestions.add(key);
+    uniqueQuestions.push(q);
+  }
+
+  // Per-sub-question settlement (W8): one failed Exa call must not fail
+  // the whole run — proceed with what succeeded and say so.
+  const settled = await Promise.allSettled(
+    uniqueQuestions.map(async (q, i) => {
       const results = await exaSearch(q, RESULTS_PER_QUESTION);
       return results.map((r) => ({ ...r, subQuestionIndex: i }));
     }),
   );
+  const perQuestion: { title: string; url: string; text: string; publishedDate?: string; subQuestionIndex: number }[][] = [];
+  let failedCount = 0;
+  for (const outcome of settled) {
+    if (outcome.status === "fulfilled") {
+      perQuestion.push(outcome.value);
+    } else {
+      failedCount += 1;
+    }
+  }
 
   // Dedupe by normalised URL, keeping the first occurrence.
   const seen = new Set<string>();
@@ -104,7 +135,7 @@ export async function researchSubQuestions(
   }
   candidates.sort((a, b) => a.subQuestionIndex - b.subQuestionIndex);
 
-  return candidates.map((c, i) => ({
+  const sources = candidates.map((c, i) => ({
     id: `S${i + 1}`,
     url: c.url,
     title: c.title,
@@ -113,6 +144,20 @@ export async function researchSubQuestions(
     subQuestionIndex: c.subQuestionIndex,
     publishedDate: c.publishedDate,
   }));
+
+  if (sources.length === 0) {
+    throw new Error(
+      "The search returned no usable sources for these sub-questions. Try broadening the plan and searching again.",
+    );
+  }
+
+  return {
+    sources,
+    warning:
+      failedCount > 0
+        ? `Search failed for ${failedCount} of ${uniqueQuestions.length} sub-questions; this brief is based on the sources that could be read.`
+        : undefined,
+  };
 }
 
 /* --------------------------------- draft --------------------------------- */
@@ -176,7 +221,7 @@ Sources:
 ${sourcesBlock(sources)}
 
 Write a brief answering the question, at most 450 words, in Markdown:
-- Start with a one-line heading, then a short "Bottom line" sentence, then bullet points, then a brief closing recommendation if the sources support one.
+- Start with a one-line heading that restates the research question (keep it a question, ending with "?"), then a short "Bottom line" sentence, then bullet points, then a brief closing recommendation if the sources support one.
 - EVERY factual sentence MUST end with an inline citation like [S1] or [S2][S5] naming the source(s) it comes from. The citation must be the last thing in the SAME sentence — never put a citation on its own line, in its own bullet, or in a separate paragraph. Example of the correct format: "- Meta CPCs in India run ₹4–₹25 depending on category [S2]." No exceptions — a sentence without an inline citation will be deleted by a mechanical checker.
 - Use only facts present in the sources. Do not add background knowledge.
 - Where two sources disagree on a material fact, say so in the brief (citing both) AND list the disagreement in "conflicts".
@@ -252,6 +297,23 @@ export async function draftBrief(
     } catch {
       // Repair failed — fall through with the first pass; its uncited
       // claims are already flagged rather than presented as fact.
+    }
+  }
+
+  if (pass.stats.wordCount > 500) {
+    // One shortening repair pass (W4): the brief promised ≤ ~450 words.
+    // The final stats report the word count after this attempt either way.
+    const shortenNote = `\nIMPORTANT: a previous draft ran to ${pass.stats.wordCount} words. Rewrite the brief to at most 450 words: keep every material fact and its inline citation, cut repetition and background first.`;
+    try {
+      const shorter = await requestDraft(question, sources, shortenNote);
+      const shorterPass = citationPostPass(shorter.brief, validIds);
+      if (shorterPass.stats.wordCount < pass.stats.wordCount) {
+        pass = shorterPass;
+        conflicts = shorter.conflicts;
+      }
+    } catch {
+      // Shortening failed — keep the longer brief; its stats honestly
+      // report the word count.
     }
   }
 

@@ -1,52 +1,47 @@
 import { NextResponse } from "next/server";
 import { draftBrief } from "@/lib/agent";
-import type { Source } from "@/lib/types";
+import { getRun } from "@/lib/runs";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-function isSourceLike(v: unknown): v is Source {
-  if (!v || typeof v !== "object") return false;
-  const s = v as Record<string, unknown>;
-  return (
-    typeof s.id === "string" &&
-    typeof s.url === "string" &&
-    typeof s.title === "string" &&
-    typeof s.text === "string"
-  );
-}
-
+/**
+ * Drafting uses ONLY the question and sources stored server-side on the
+ * run by /api/plan and /api/research. Any question or sources supplied in
+ * the request body are ignored — a brief can never be drafted from
+ * fabricated, client-supplied sources (Slice 1 QA fix C1).
+ */
 export async function POST(req: Request) {
-  let body: { question?: unknown; sources?: unknown };
+  let body: { runId?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const question = typeof body.question === "string" ? body.question.trim() : "";
-  if (!question) {
+  const runId = typeof body.runId === "string" ? body.runId : "";
+  const run = runId ? getRun(runId) : undefined;
+  if (!run) {
     return NextResponse.json(
-      { error: "The original research question is required." },
-      { status: 400 },
+      { error: "Unknown run. Start again from the question." },
+      { status: 404 },
     );
   }
-  if (!Array.isArray(body.sources) || !body.sources.every(isSourceLike)) {
+  if (!run.planApproved) {
     return NextResponse.json(
-      { error: "A valid list of sources is required." },
-      { status: 400 },
+      { error: "The plan for this run has not been approved yet." },
+      { status: 409 },
     );
   }
-  const sources = (body.sources as Source[]).slice(0, 20);
-  if (sources.length === 0) {
+  if (!run.sources || run.sources.length === 0) {
     return NextResponse.json(
-      { error: "At least one source is required to draft a brief." },
-      { status: 400 },
+      { error: "This run has no research yet — approve the plan and run research first." },
+      { status: 409 },
     );
   }
 
   try {
-    const result = await draftBrief(question, sources);
+    const result = await draftBrief(run.question, run.sources);
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

@@ -24,8 +24,15 @@ export interface Conflict {
 export interface DraftStats {
   claimsTotal: number;
   claimsCited: number;
-  coveragePct: number;
+  /** Null when the brief contains no checkable claims — never a fake 100%. */
+  coveragePct: number | null;
   wordCount: number;
+}
+
+export interface ResearchResult {
+  sources: Source[];
+  /** Present when some sub-question searches failed but the run proceeded. */
+  warning?: string;
 }
 
 export interface DraftResult {
