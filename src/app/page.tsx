@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   Conflict,
   DraftResult,
@@ -73,6 +73,30 @@ function BriefBody({ markdown }: { markdown: string }) {
   );
 }
 
+/* ------------------------------ history ---------------------------------- */
+
+const HISTORY_KEY = "briefagent.history.v1";
+
+interface HistoryRecord {
+  id: string;
+  question: string;
+  briefMarkdown: string;
+  conflicts: Conflict[];
+  sources: { id: string; title: string; url: string }[];
+  createdAt: string;
+}
+
+function loadHistory(): HistoryRecord[] {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(HISTORY_KEY) ?? "[]",
+    ) as HistoryRecord[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 /* --------------------------------- page ---------------------------------- */
 
 const STEPS: { key: string; label: string }[] = [
@@ -126,6 +150,12 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [failedStep, setFailedStep] = useState<"plan" | "research" | "draft" | null>(null);
   const [copied, setCopied] = useState(false);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [viewing, setViewing] = useState<HistoryRecord | null>(null);
+
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
 
   const busy =
     status === "planning" || status === "researching" || status === "drafting";
@@ -209,9 +239,7 @@ export default function Home() {
     if (!draft) return;
     setStatus("final");
     try {
-      const key = "briefagent.history.v1";
-      const prev = JSON.parse(localStorage.getItem(key) ?? "[]") as unknown[];
-      const record = {
+      const record: HistoryRecord = {
         id: `${Date.now()}`,
         question: question.trim(),
         briefMarkdown: draft.briefMarkdown,
@@ -219,10 +247,23 @@ export default function Home() {
         sources: sources.map((s) => ({ id: s.id, title: s.title, url: s.url })),
         createdAt: new Date().toISOString(),
       };
-      localStorage.setItem(key, JSON.stringify([record, ...prev].slice(0, 20)));
+      const next = [record, ...loadHistory()].slice(0, 20);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      setHistory(next);
     } catch {
       // History is a convenience; never block the final state on it.
     }
+  }
+
+  function deleteHistoryEntry(id: string) {
+    const next = loadHistory().filter((r) => r.id !== id);
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    } catch {
+      // If storage is unavailable the in-memory list still updates.
+    }
+    setHistory(next);
+    if (viewing?.id === id) setViewing(null);
   }
 
   function exportMarkdown(): string {
@@ -284,6 +325,50 @@ export default function Home() {
           Nothing is finalised without your sign-off.
         </p>
       </header>
+
+      {/* landing: what it does, the two gates, what it won't do */}
+      <section className="mb-8 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+        <h2 className="text-sm font-semibold">How BriefAgent works</h2>
+        <ol className="mt-3 grid gap-4 text-sm leading-relaxed text-stone-600 sm:grid-cols-3">
+          <li>
+            <strong className="text-stone-900">1. You approve the plan.</strong>{" "}
+            BriefAgent breaks your question into 3–6 sub-questions and waits.
+            Nothing is searched until you approve or edit the plan — that is
+            Checkpoint 1.
+          </li>
+          <li>
+            <strong className="text-stone-900">2. It reads real sources.</strong>{" "}
+            Each sub-question is searched and the pages are actually read. You
+            see every source it used, with links, before any writing happens.
+          </li>
+          <li>
+            <strong className="text-stone-900">3. You approve the draft.</strong>{" "}
+            The brief is at most ~450 words. Copy and download stay locked
+            until you approve it — that is Checkpoint 2.
+          </li>
+        </ol>
+        <div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 p-4">
+          <h3 className="text-sm font-semibold text-stone-800">
+            What it will not do
+          </h3>
+          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-stone-600">
+            <li>
+              It never presents an uncited claim as fact. A claim that comes
+              back without a citation is removed from the brief and listed as
+              unverified, so you can see exactly what was dropped.
+            </li>
+            <li>
+              It never invents sources. Every citation points to a page it
+              actually retrieved for your run, and the server drafts only from
+              those pages.
+            </li>
+            <li>
+              It does not quietly pick a side. When sources disagree on a
+              material fact, the disagreement is shown in the brief.
+            </li>
+          </ul>
+        </div>
+      </section>
 
       {/* progress */}
       <ol className="mb-8 flex flex-wrap gap-2" aria-label="Progress">
@@ -552,6 +637,121 @@ export default function Home() {
               Download .md
             </button>
           </div>
+        </section>
+      )}
+
+      {/* saved brief — read-only view of a history entry */}
+      {viewing && (
+        <section className="mt-5 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold">Saved brief — read-only</h2>
+            <button
+              onClick={() => setViewing(null)}
+              className="text-sm font-medium text-stone-500 underline underline-offset-2"
+            >
+              Close
+            </button>
+          </div>
+          <p className="mt-1 text-sm text-stone-600">
+            <strong>Question:</strong> {viewing.question}
+          </p>
+          <p className="text-xs text-stone-500">
+            Approved{" "}
+            {new Date(viewing.createdAt).toLocaleString("en-GB", {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+          </p>
+          <div className="mt-4">
+            <BriefBody markdown={viewing.briefMarkdown} />
+          </div>
+          {viewing.conflicts.length > 0 && (
+            <div className="mt-5 rounded-lg border border-orange-200 bg-orange-50 p-4">
+              <h3 className="text-sm font-semibold text-orange-900">
+                Where sources disagree
+              </h3>
+              <ul className="mt-2 space-y-2 text-sm text-orange-950">
+                {viewing.conflicts.map((c, i) => (
+                  <li key={i}>
+                    <strong>{c.claim}</strong>
+                    <ul className="mt-1 list-inside list-disc">
+                      {c.positions.map((p, j) => (
+                        <li key={j}>
+                          [{p.sourceId}] {p.stance}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {viewing.sources.length > 0 && (
+            <div className="mt-5 border-t border-stone-100 pt-4">
+              <h3 className="text-sm font-semibold">Sources</h3>
+              <ul className="mt-2 space-y-1 text-sm">
+                {viewing.sources.map((s) => (
+                  <li key={s.id}>
+                    <span className="mr-2 inline-block rounded bg-amber-100 px-1 text-[11px] font-semibold text-amber-900">
+                      {s.id}
+                    </span>
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-blue-800 underline underline-offset-2"
+                    >
+                      {s.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* history */}
+      {history.length > 0 && (
+        <section className="mt-5 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold">
+            Your past briefs ({history.length})
+          </h2>
+          <p className="mt-1 text-xs text-stone-500">
+            Saved in this browser only, when you approve a brief. Click one to
+            read it again.
+          </p>
+          <ul className="mt-3 divide-y divide-stone-100">
+            {history.map((r) => (
+              <li key={r.id} className="flex items-center gap-3 py-2">
+                <button
+                  onClick={() => setViewing(r)}
+                  className="flex-1 text-left"
+                >
+                  <span className="block truncate text-sm font-medium text-stone-900">
+                    {r.question || "Untitled brief"}
+                  </span>
+                  <span className="text-xs text-stone-500">
+                    {new Date(r.createdAt).toLocaleString("en-GB", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}{" "}
+                    · {r.sources.length} sources
+                    {r.conflicts.length > 0
+                      ? ` · ${r.conflicts.length} disagreement${r.conflicts.length > 1 ? "s" : ""}`
+                      : ""}
+                  </span>
+                </button>
+                <button
+                  onClick={() => deleteHistoryEntry(r.id)}
+                  className="text-xs font-medium text-red-700"
+                  aria-label={`Delete brief: ${r.question}`}
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </main>

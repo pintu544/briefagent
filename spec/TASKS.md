@@ -10,9 +10,9 @@
 - [x] Slice 1 QA: adversarial pass (fresh subagent) — odd questions, empty input, conflicting-source question, oversized question. Criticals fixed before Slice 2. (Fix pass 22 Nov 2026: C1 server-side run store + gates + provenance; W1–W8 post-pass/plan/draft/research hardening — all acceptance cases re-run and passing, incl. a full live UI end-to-end run.)
 
 ## Slice 2 — Proof and polish
-- [ ] T2.1 Eval fixtures: 10 scenarios in `fixtures/scenarios.json` with expectations (incl. one conflict-expected, one niche). Done means: fixtures committed with a documented contract.
-- [ ] T2.2 Eval runner: `scripts/run-evals.ts` executes all 10 headlessly, writes `fixtures/eval-results.md` (completion, citation coverage, conflicts). Done means: the table exists from a real run.
-- [ ] T2.3 Landing + run history: one-screen explanation (chief-of-staff framing, the two checkpoints), past briefs from localStorage. Impeccable pass on both screens. Done means: a first-time visitor understands the product in 10 seconds.
+- [x] T2.1 Eval fixtures: 10 scenarios in `fixtures/scenarios.json` with expectations (incl. one conflict-expected, one niche). Done means: fixtures committed with a documented contract.
+- [x] T2.2 Eval runner: `scripts/run-evals.ts` executes all 10 headlessly, writes `fixtures/eval-results.md` (completion, citation coverage, conflicts). Done means: the table exists from a real run. (22 Nov 2026: 10/10 completed, average citation coverage 86.3%, 18 conflicts — see fixtures/eval-results.md.)
+- [x] T2.3 Landing + run history: one-screen explanation (chief-of-staff framing, the two checkpoints), past briefs from localStorage. Impeccable pass on both screens. Done means: a first-time visitor understands the product in 10 seconds.
 - [ ] T2.4 Deploy + repo: Vercel deploy (live URL verified), public GitHub repo with description/homepage/topics (verified via `gh`), README with setup, AI tools used, API list, and the eval table quoted verbatim. Done means: live URL + repo both check out.
 - [ ] Slice 2 QA: adversarial pass on the live URL (fresh subagent). Criticals fixed before the build is called done.
 
