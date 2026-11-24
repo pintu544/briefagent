@@ -18,10 +18,14 @@ import type { Source } from "./types";
 
 export type RunStage = "planned" | "approved" | "researched";
 
+export const TOKEN_TTL_SECONDS = 2 * 60 * 60;
+
 export interface RunTokenPayload {
   stage: RunStage;
   question: string;
   subQuestions: string[];
+  /** Unix seconds at signing time — used for expiry. */
+  iat: number;
   /** Present at stage "researched": the sources /api/draft may use. */
   sources?: Source[];
   /** Present at stage "researched" when some sub-question searches failed. */
@@ -54,9 +58,13 @@ function signature(body: string, secret: string): Buffer {
   return createHmac("sha256", secret).update(body).digest();
 }
 
-export function signRunToken(payload: RunTokenPayload): string {
+export function signRunToken(payload: Omit<RunTokenPayload, "iat">): string {
   const secret = getSecret();
-  const body = Buffer.from(JSON.stringify(payload), "utf8").toString(
+  const withIat: RunTokenPayload = {
+    ...payload,
+    iat: Math.floor(Date.now() / 1000),
+  };
+  const body = Buffer.from(JSON.stringify(withIat), "utf8").toString(
     "base64url",
   );
   return `${body}.${signature(body, secret).toString("base64url")}`;
@@ -67,7 +75,10 @@ export function signRunToken(payload: RunTokenPayload): string {
  * malformed token or bad signature → 401. Stage checks are the caller's
  * job (they differ per route) and answer 409.
  */
-export function parseRunToken(raw: unknown): RunTokenPayload {
+export function parseRunToken(
+  raw: unknown,
+  now: () => number = Date.now,
+): RunTokenPayload {
   if (typeof raw !== "string" || raw.trim() === "") {
     throw new TokenError(
       "This request is missing its run token. Start again from the question.",
@@ -110,9 +121,16 @@ export function parseRunToken(raw: unknown): RunTokenPayload {
     !STAGES.includes(p.stage as RunStage) ||
     typeof p.question !== "string" ||
     !Array.isArray(p.subQuestions) ||
-    !p.subQuestions.every((q) => typeof q === "string")
+    !p.subQuestions.every((q) => typeof q === "string") ||
+    typeof p.iat !== "number"
   ) {
     throw invalid();
+  }
+  if (Math.floor(now() / 1000) - p.iat > TOKEN_TTL_SECONDS) {
+    throw new TokenError(
+      "Run token has expired — please start again.",
+      401,
+    );
   }
   if (p.stage === "researched") {
     if (

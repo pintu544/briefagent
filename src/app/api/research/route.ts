@@ -34,7 +34,11 @@ export async function POST(req: Request) {
     if (err instanceof TokenError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    throw err;
+    console.error("[research] unexpected error during token validation:", err);
+    return NextResponse.json(
+      { error: "Something went wrong — please try again." },
+      { status: 500 },
+    );
   }
 
   try {
@@ -57,9 +61,10 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ token, sources, warning });
   } catch (err) {
+    console.error("[research] unexpected error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Research failed. Please try again." },
-      { status: 502 },
+      { error: "Something went wrong — please try again." },
+      { status: 500 },
     );
   }
 }

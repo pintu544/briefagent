@@ -6,6 +6,7 @@ import {
   parseRunToken,
   requireStage,
   TokenError,
+  TOKEN_TTL_SECONDS,
 } from '../src/lib/token';
 import type { RunTokenPayload } from '../src/lib/token';
 
@@ -22,7 +23,7 @@ describe('token module', () => {
     process.env.RUN_TOKEN_SECRET = originalSecret;
   });
 
-  const basePayload: RunTokenPayload = {
+  const basePayload: Omit<RunTokenPayload, 'iat'> = {
     stage: 'planned',
     question: 'What is the global EV market size?',
     subQuestions: ['What are current sales figures?', 'What is the CAGR?'],
@@ -38,7 +39,7 @@ describe('token module', () => {
     });
 
     test('researched payload with sources round-trips correctly', () => {
-      const payload: RunTokenPayload = {
+      const payload: Omit<RunTokenPayload, 'iat'> = {
         stage: 'researched',
         question: 'What drives EV adoption?',
         subQuestions: ['Q1'],
@@ -60,7 +61,7 @@ describe('token module', () => {
     });
 
     test('approved stage round-trips', () => {
-      const payload: RunTokenPayload = {
+      const payload: Omit<RunTokenPayload, 'iat'> = {
         stage: 'approved',
         question: 'Is renewable energy cost-competitive?',
         subQuestions: ['Q1', 'Q2'],
@@ -233,6 +234,40 @@ describe('token module', () => {
           return true;
         },
       );
+    });
+  });
+
+  describe('token expiry (TOKEN_TTL_SECONDS = 2 h)', () => {
+    test('a fresh token parses without error', () => {
+      const token = signRunToken(basePayload);
+      assert.doesNotThrow(() => parseRunToken(token));
+    });
+
+    test('a token issued 3 hours ago is rejected with TokenError 401 "expired"', () => {
+      const token = signRunToken(basePayload);
+      const threeHoursLater = () => Date.now() + 3 * 60 * 60 * 1000;
+      assert.throws(
+        () => parseRunToken(token, threeHoursLater),
+        (err: Error) => {
+          assert.ok(err instanceof TokenError, `expected TokenError, got ${err}`);
+          assert.strictEqual(err.status, 401);
+          assert.ok(
+            err.message.toLowerCase().includes('expired'),
+            `expected "expired" in message, got: ${err.message}`,
+          );
+          return true;
+        },
+      );
+    });
+
+    test('a token issued 1 hour ago still parses (within TTL)', () => {
+      const token = signRunToken(basePayload);
+      const oneHourLater = () => Date.now() + 1 * 60 * 60 * 1000;
+      assert.doesNotThrow(() => parseRunToken(token, oneHourLater));
+    });
+
+    test('TOKEN_TTL_SECONDS is 7200 (2 hours)', () => {
+      assert.strictEqual(TOKEN_TTL_SECONDS, 7200);
     });
   });
 });

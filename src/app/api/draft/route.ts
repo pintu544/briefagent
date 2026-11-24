@@ -34,7 +34,11 @@ export async function POST(req: Request) {
     if (err instanceof TokenError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    throw err;
+    console.error("[draft] unexpected error during token validation:", err);
+    return NextResponse.json(
+      { error: "Something went wrong — please try again." },
+      { status: 500 },
+    );
   }
 
   const sources = payload.sources ?? [];
@@ -49,9 +53,10 @@ export async function POST(req: Request) {
     const result = await draftBrief(payload.question, sources);
     return NextResponse.json(result);
   } catch (err) {
+    console.error("[draft] unexpected error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Drafting failed. Please try again." },
-      { status: 502 },
+      { error: "Something went wrong — please try again." },
+      { status: 500 },
     );
   }
 }

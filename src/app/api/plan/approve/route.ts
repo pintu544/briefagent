@@ -36,6 +36,13 @@ export async function POST(req: Request) {
       .map((q) => q.trim())
       .filter((q) => q.length > 0)
       .slice(0, 6);
+    const tooLong = subQuestions.find((q) => q.length > 500);
+    if (tooLong !== undefined) {
+      return NextResponse.json(
+        { error: "Each sub-question must be 500 characters or fewer." },
+        { status: 400 },
+      );
+    }
     if (subQuestions.length === 0) {
       return NextResponse.json(
         { error: "At least one sub-question is required." },
@@ -53,6 +60,10 @@ export async function POST(req: Request) {
     if (err instanceof TokenError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    throw err;
+    console.error("[plan/approve] unexpected error:", err);
+    return NextResponse.json(
+      { error: "Something went wrong — please try again." },
+      { status: 500 },
+    );
   }
 }

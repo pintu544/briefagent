@@ -38,9 +38,10 @@ export async function POST(req: Request) {
     if (err instanceof TokenError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
+    console.error("[plan] unexpected error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Planning failed. Please try again." },
-      { status: 502 },
+      { error: "Something went wrong — please try again." },
+      { status: 500 },
     );
   }
 }
